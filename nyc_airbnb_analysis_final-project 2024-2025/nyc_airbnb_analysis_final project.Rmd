@@ -1,0 +1,272 @@
+
+---
+title: 'NYC Airbnb 2019: Interactive Data Exploration'
+author: "Gheser Emma, Malossini Amedeo, Stefa Klea"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(leaflet.extras)
+library(plotly)
+library(dplyr)
+```
+
+# Introduction
+
+This report explores the 2019 Airbnb listing dataset for New York City. We analyze how listings vary by borough, room type, and price, and visualize listing densities and trends using interactive graphics.
+
+# Data Loading
+
+```{r load-data}
+airbnb <- read_csv("airbnb_nyc_2019.csv")
+glimpse(airbnb)
+```
+We read the raw 2019 NYC Airbnb CSV into R with read_csv() in order to create a data-frame called airbnb. We then used the function glimpse() in order to print the structure of the dataframe, showing variable names, types, and sample data.
+
+# Data Cleaning and Preparation
+
+```{r clean-data}
+airbnb_clean <- airbnb %>%
+  mutate(
+    last_review = as_date(last_review),
+    reviews_per_month = replace_na(reviews_per_month, 0)
+  ) %>%
+  select(-id, -host_id, -name, -host_name)
+
+colSums(is.na(airbnb_clean))
+```
+In this section we have cleaned and prepared the data for analysis. The mutate() function is used to convert the last_review column into proper date format and to replace missing values in the reviews_per_month column with zeros. Additionally, unnecessary columns such as id, host_id, name, and host_name are removed using select(). Finally, colSums(is.na(...)) is used to check for any remaining missing values in the dataset.
+
+# Listings by Borough and Room Type
+```{r borough-roomtype}
+borough_stats <- airbnb_clean %>%
+  group_by(neighbourhood_group) %>%
+  summarise(
+    listings_count = n(),
+    avg_price = mean(price)
+  )
+
+borough_stats
+```
+
+We took the cleaned listings table and grouped it by neighbourhood _group, so each of the five boroughs became its own mini-dataset. For every borough we then summarised two key figures: first, we counted how many listings it held, giving us listings_count; second, we calculated the mean nightly price, producing avg_price. The outcome stored in the object borough_stats, is a neat five-row overview that shows, in a single glance, how large the Airbnb supply was in each borough and what guests had typically paid there.
+
+```{r borough-barplot}
+ggplot(borough_stats, aes(x = neighbourhood_group, y = listings_count, fill = neighbourhood_group)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Number of Airbnb Listings by Borough",
+       x = "Borough", y = "Count") +
+  theme_minimal()
+```
+
+Next, we visualised those figures by feeding borough_stats into ggplot(). We mapped each neighbourhood_group to the x-axis and its corresponding listings_count to the y-axis, while also assigning the borough to fill so every bar carried its own colour. With geom_col() we drew solid columns (and hid the legend because the axis labels already identify the boroughs). We capped the plot with readable labels—“Number of Airbnb Listings by Borough” for the title and plain “Borough” and “Count” for the axes—and wrapped everything in theme_minimal() to keep the design clean. The finished chart let us see, at a glance, which boroughs dominated Airbnb supply and how sharply Manhattan and Brooklyn out-scaled the others.
+
+```{r roomtype-barplot}
+ggplot(airbnb_clean, aes(x = room_type, fill = room_type)) +
+  geom_bar(show.legend = FALSE) +
+  labs(title = "Listing Count by Room Type", x = "Room Type", y = "Number of Listings") +
+  theme_minimal()
+```
+
+Here, a bar chart is created to show how listings are distributed across different room types, such as Entire home/apt Private room or Shared room. The chart is colored by room type, while informative titles and axis labels make it easier to interpret. This visualization helps highlight the most common types of accommodations offered.
+
+# Price Distribution
+
+```{r price-summary}
+summary(airbnb_clean$price)
+```
+
+We ran summary(airbnb_clean$price) to get the five-number summary and mean for nightly rates. This single command gave us the minimum, first quartile, median, mean, third quartile, and maximum price, letting us verify the central tendency identified earlier and spot any extreme outliers before moving on.
+
+```{r boxplot-price-borough}
+ggplot(airbnb_clean %>% filter(price <= 500),
+       aes(x = neighbourhood_group, y = price, fill = neighbourhood_group)) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(title = "Price Distribution by Borough (up to $500)",
+       x = "Borough", y = "Price (USD)") +
+  theme_minimal()
+```
+
+We created a boxplot using ggplot2 to show the distribution of Airbnb prices by borough, focusing only on listings priced at $500 or less. We filtered the data to exclude prices above $500, then plotted the price on the y-axis and the boroughs on the x-axis. We also used different colors to fill each borough’s boxplot, removed the legend for clarity, and added a descriptive title and axis labels. Finally, we applied a minimal theme to keep the visualization clean and easy to read.
+
+```{r}
+#How does price distribution shift by room type?
+plot_ly(airbnb_clean, x = ~price, color = ~room_type, type = "histogram", opacity = 0.6) %>%
+  layout(title = "Price Distribution by Room Type",
+         barmode = "overlay",
+         xaxis = list(range = c(0, 500)))
+```
+
+We created an interactive histogram using plotly to visualize the distribution of Airbnb prices by room type. We plotted the prices on the x-axis and used different colors to represent each room type, with some transparency to better see overlapping bars. We set the bars to overlay each other for easier comparison and limited the x-axis to prices between $0 and $500.
+
+# Top10 Neighborhoods by Number of Listings
+```{r}
+#Bar Chart: Top 10 Neighborhoods by Listings
+airbnb_clean %>%
+  count(neighbourhood) %>%
+  top_n(10) %>%
+  ggplot(aes(x = reorder(neighbourhood, n), y = n)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Top 10 Neighborhoods by Number of Listings", x = "Neighborhood", y = "Listings") +
+  theme_minimal()
+```
+
+We counted the number of Airbnb listings in each neighborhood and selected the top 10 neighborhoods with the most listings. Then, we created a horizontal bar chart using ggplot2 to display these neighborhoods ordered by their listing counts. The bars are filled with a light blue color, and we added a clear title and axis labels.
+
+# Monthly Reviews by Room Type
+```{r}
+#What’s the distribution of reviews per month per room type?
+# Prepare data
+monthly_reviews <- airbnb_clean %>%
+  filter(!is.na(last_review)) %>%
+  mutate(month = floor_date(as.Date(last_review), "month")) %>%
+  group_by(month, room_type) %>%
+  summarise(reviews = n()) %>%
+  ungroup()
+
+# Static ggplot
+p <- ggplot(monthly_reviews, aes(x = month, y = reviews, color = room_type)) +
+  geom_line() +
+  facet_wrap(~ room_type, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Monthly Reviews by Room Type", x = "Month", y = "Number of Reviews")
+
+# Convert to interactive
+ggplotly(p)
+```
+
+We started by filtering out listings without a last_review date to ensure we only analyze valid review data. Then, we converted the last_review dates into monthly periods using floor_date to group reviews by month. Next, we grouped the data by both month and room_type, counting the number of reviews for each combination. After ungrouping, we created a line plot with ggplot2 where the x-axis represents months, the y-axis shows the number of reviews, and different colors distinguish room types. We used facet_wrap to create separate panels for each room type, allowing independent y-axis scales for better clarity. The plot uses a minimal theme for a clean look and includes informative axis labels and a title. Finally, we transformed the static plot into an interactive version with ggplotly, enabling dynamic features.
+
+# Interactive Heatmap
+
+```{r leaflet-heatmap}
+leaflet(airbnb_clean) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addHeatmap(lng = ~longitude, lat = ~latitude, blur = 20, radius = 8)
+```
+
+This heatmap highlights areas with higher concentrations of listings. We used the leaflet package to create an interactive map of Airbnb listings. First, we added a clean base map layer using CartoDB’s Positron tiles for better visualization. Then, we overlaid a heatmap based on the longitude and latitude coordinates of the listings, adjusting the blur and radius parameters to control the smoothness and size of the heat spots.
+
+#Concentration of Reviews
+
+```{r}
+#Are highly reviewed listings concentrated in specific boroughs?
+# Filter for listings with more than 100 reviews
+high_review_listings <- airbnb_clean %>%
+  filter(number_of_reviews > 100)
+
+leaflet(high_review_listings) %>%
+  addTiles() %>%
+  addCircleMarkers(~longitude, ~latitude,
+                   color = ~ifelse(neighbourhood_group == "Manhattan", "red", "blue"),
+                   radius = 3,
+                   label = ~paste("Borough:", neighbourhood_group, "<br>",
+                                  "Room type:", room_type, "<br>",
+                                  "Reviews:", number_of_reviews),
+                   clusterOptions = markerClusterOptions()) %>%
+  addLegend("bottomright", colors = c("red", "blue"),
+            labels = c("Manhattan", "Other"), title = "Borough")
+```
+
+We began by filtering the Airbnb dataset to include only listings with more than 100 reviews using filter(number_of_reviews > 100), which allowed us to focus on listings that have received significant user engagement. Then, we used the leaflet() function to create an interactive map object, passing in the filtered data (high_review_listings) as input. The addTiles() function adds the default OpenStreetMap base layer to the map for geographic context. We then used addCircleMarkers() to plot each listing as a circle marker at its geographic coordinates (~longitude, ~latitude). The color argument uses an inline ifelse() condition to assign red to listings in Manhattan and blue to listings in all other boroughs, enabling a visual comparison. We set radius = 3 to control marker size and used the label argument to display a popup with the listing’s borough, room type, and number of reviews when hovered over. To manage visual clutter in areas with many listings, we applied clusterOptions = markerClusterOptions(), which groups nearby markers into clusters that can be expanded when zoomed in. Lastly, we added a legend using addLegend() to explain the color coding, with "red" representing Manhattan and "blue" representing all other boroughs. 
+
+
+# Interactive Scatter Plot
+
+```{r plotly-scatter}
+plot_ly(airbnb_clean,
+        x = ~number_of_reviews,
+        y = ~price,
+        color = ~neighbourhood_group,
+        symbol = ~room_type,
+        symbols = c('circle','square','diamond'),
+        marker = list(size = 5, opacity = 0.7)) %>%
+  layout(title = "Listing Price vs. Number of Reviews",
+         xaxis = list(title = "Number of Reviews"),
+         yaxis = list(title = "Price (USD)"))
+```
+
+We created an interactive scatter plot using plotly to explore the relationship between the number of reviews and the price of Airbnb listings. On the x-axis, we plotted the number of reviews, and on the y-axis, the price in USD. We used different colors to represent each borough (neighbourhood_group) and different symbols (circle, square, diamond) to distinguish room types. The markers were set to a moderate size with some transparency to improve visibility of overlapping points. 
+
+# Average Nightly Airbnb Price by NYC Borough
+```{r}
+#“How did the average nightly Airbnb price evolve month-by-month in each of New York City’s five boroughs during 2019?”
+# 1. Load your data
+airbnb <- read.csv("airbnb_nyc_2019.csv", stringsAsFactors = FALSE)
+
+# 2. Clean and prepare
+airbnb_time <- airbnb %>%
+  filter(!is.na(last_review), price > 0) %>%
+  mutate(
+    date = as.Date(last_review),
+    month = floor_date(date, "month"),
+    borough = neighbourhood_group
+  ) %>%
+  filter(year(date) == 2019) %>%
+  group_by(month, borough) %>%
+  summarise(avg_price = mean(price, na.rm = TRUE), .groups = "drop")
+
+# 3. Pivot to wide format (like AAPL & MSFT in your example)
+library(tidyr)
+wide_df <- pivot_wider(airbnb_time,
+                       names_from = borough,
+                       values_from = avg_price)
+
+# 4. Plot with interactive range selector & slider
+fig <- plot_ly(wide_df, x = ~month)
+
+# Add one line per borough
+boroughs <- names(wide_df)[-1]  # everything except 'month'
+for (b in boroughs) {
+  fig <- fig %>% add_lines(y = as.formula(paste0("~`", b, "`")), name = b)
+}
+
+# 5. Layout with zoom tools
+fig <- fig %>%
+  layout(
+    title = "Average Nightly Airbnb Price by NYC Borough (2019)",
+    xaxis = list(
+      title = "Date",
+      rangeselector = list(
+        buttons = list(
+          list(count = 1, label = "1 mo", step = "month", stepmode = "backward"),
+          list(count = 3, label = "3 mo", step = "month", stepmode = "backward"),
+          list(count = 6, label = "6 mo", step = "month", stepmode = "backward"),
+          list(step = "all"))
+      ),
+      rangeslider = list(type = "date")
+    ),
+    yaxis = list(title = "Average Nightly Price ($)")
+  )
+
+fig
+```
+
+We began by loading the Airbnb dataset for NYC in 2019 and filtered out rows with missing last_review dates or non-positive prices to ensure data quality. Using mutate, we converted the last_review column to a date format and extracted the month with floor_date, while also renaming the borough column for clarity. We then filtered the data to include only records from 2019. After grouping by month and borough, we calculated the average nightly price for each group with summarise. To prepare for plotting, we reshaped the data from long to wide format using pivot_wider, creating separate columns for each borough’s average price. Finally, we used plot_ly to create an interactive line chart, adding one line per borough with a loop. The plot includes a range selector with preset zoom buttons and a range slider on the x-axis for easy navigation through time, along with descriptive axis labels and a title.
+
+
+#INSIGHTS
+- Manhattan and Brooklyn hold most listings.
+- Entire homes and private rooms dominate the market.
+- Listing prices are heavily right-skewed.
+- Dense areas (e.g., central Manhattan) show up clearly on the heatmap.
+- High review count doesn't always correlate with high price.
+
+
+
+#Code sources
+For our project we used the dataset: AB_NYC_2019.csv, then we also took inspiration from https://www.kaggle.com/code/upadorprofzs/understand-your-data-airbnb-reservations. 
+
+
